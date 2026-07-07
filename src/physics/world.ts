@@ -11,6 +11,8 @@ const DRAG = 0.12
 const REST_SPEED = 80
 const MAX_RESOLVE_ITERS = 8
 const SKIN = 0.05
+/** Rolling resistance for resting contact — far below sliding μ, so the ball rolls on gentle slopes. */
+const ROLL_MU = 0.02
 
 export interface CollisionEvent {
   collider: Collider
@@ -24,16 +26,27 @@ function surfaceVel(col: Collider, point: Vec2): Vec2 {
   return col.velocityAt ? col.velocityAt(point) : v2(0, 0)
 }
 
-/** Reflect ball velocity off a contact, in the surface's reference frame. */
+/**
+ * Reflect ball velocity off a contact, in the surface's reference frame.
+ * Friction is Coulomb-style: tangential impulse capped at μ times the normal
+ * impulse. Resting/rolling contact (tiny normal impulse every substep) is
+ * then nearly lossless, while hard impacts scrub tangential speed.
+ */
 function bounce(ball: Ball, col: Collider, n: Vec2, point: Vec2, events: CollisionEvent[]): void {
   const vs = surfaceVel(col, point)
   const rel = sub(ball.v, vs)
   const vn = dot(rel, n)
   if (vn >= 0) return
-  const e = -vn < REST_SPEED ? 0 : col.mat.e
-  const tangential = sub(rel, scale(n, vn))
-  const newRel = add(scale(tangential, 1 - col.mat.f), scale(n, -e * vn))
-  ball.v = add(vs, newRel)
+  const resting = -vn < REST_SPEED
+  const e = resting ? 0 : col.mat.e
+  const jn = -(1 + e) * vn
+  let tangential = sub(rel, scale(n, vn))
+  const vt = Math.hypot(tangential.x, tangential.y)
+  if (vt > 1e-9) {
+    const dvt = Math.min(vt, (resting ? ROLL_MU : col.mat.f) * jn)
+    tangential = scale(tangential, (vt - dvt) / vt)
+  }
+  ball.v = add(vs, add(tangential, scale(n, -e * vn)))
   events.push({ collider: col, point, n, impact: -vn })
 }
 

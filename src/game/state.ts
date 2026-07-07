@@ -1,15 +1,21 @@
-import { add, scale, len } from '../physics/vec2'
+import { add, scale, len, dist } from '../physics/vec2'
 import { Collider } from '../physics/colliders'
 import { Ball, makeBall } from '../physics/ball'
 import { stepBall, CollisionEvent } from '../physics/world'
-import { buildTable, LANE_X, Table } from '../table/layout'
+import { buildTable, LANE_X, RAMP_ENTRY, RAMP_EXIT_Y, Table } from '../table/layout'
 
 export type Phase = 'ready' | 'playing' | 'gameover'
-export type SfxName = 'flipper' | 'bumper' | 'sling' | 'post' | 'launch' | 'drain' | 'wall'
+export type SfxName =
+  | 'flipper' | 'bumper' | 'sling' | 'post' | 'launch' | 'drain' | 'wall'
+  | 'rollover' | 'ramp' | 'bonus'
+export type LightId = 'laneA' | 'laneB' | 'laneC' | 'ramp'
 
 const BUMPER_KICK = 380
 const SLING_KICK = 320
 const HIT_COOLDOWN = 0.06
+const ROLLOVER_COOLDOWN = 0.5
+/** Minimum upward speed to take the ramp entrance. */
+const RAMP_ENTRY_SPEED = -150
 const PLUNGE_MIN = 950
 const PLUNGE_RANGE = 1250
 const CHARGE_TIME = 1.1
@@ -26,6 +32,9 @@ export class Game {
   time = 0
   /** id -> last hit time, drives render flashes and event cooldowns. */
   hitTimes = new Map<string, number>()
+  lights: Record<LightId, boolean> = { laneA: false, laneB: false, laneC: false, ramp: false }
+  /** Set on lane completion / ramp completion; drives the render light show. */
+  lightShow: { t: number; x: number; y: number } | null = null
   /** Events from the most recent frame, for the debug overlay. */
   lastEvents: CollisionEvent[] = []
   onSfx: (name: SfxName) => void = () => {}
@@ -47,17 +56,69 @@ export class Game {
       this.charge = Math.min(1, this.charge + dt / CHARGE_TIME)
     }
 
-    const colliders: Collider[] = [
-      ...this.table.statics,
-      ...this.table.bumpers,
-      ...this.table.flippers.map((f) => f.collider()),
-    ]
+    const colliders: Collider[] =
+      this.ball.layer === 'ramp'
+        ? this.table.rampWalls
+        : [
+            ...this.table.statics,
+            ...this.table.bumpers,
+            ...this.table.flippers.map((f) => f.collider()),
+          ]
     const events: CollisionEvent[] = []
     stepBall(this.ball, colliders, dt, events)
     for (const ev of events) this.handleEvent(ev)
     this.lastEvents = events.length ? events : this.lastEvents
 
+    this.checkTriggers()
     if (this.ball.p.y > this.table.drainY) this.drain()
+  }
+
+  /** Non-colliding sensors: ramp entry/exit portals and rollover lanes. */
+  private checkTriggers(): void {
+    const b = this.ball
+    if (b.layer === 'main') {
+      if (
+        Math.abs(b.p.x - RAMP_ENTRY.x) < RAMP_ENTRY.halfW &&
+        b.p.y > RAMP_ENTRY.yTop &&
+        b.p.y < RAMP_ENTRY.yBot &&
+        b.v.y < RAMP_ENTRY_SPEED
+      ) {
+        b.layer = 'ramp'
+        this.onSfx('ramp')
+      }
+      for (const ro of this.table.rollovers) {
+        if (dist(b.p, ro.c) >= b.r + ro.r) continue
+        const last = this.hitTimes.get(ro.id) ?? -Infinity
+        if (this.time - last < ROLLOVER_COOLDOWN) continue
+        this.hitTimes.set(ro.id, this.time)
+        this.score += 150
+        this.lights[ro.id] = true
+        this.onSfx('rollover')
+        if (this.lights.laneA && this.lights.laneB && this.lights.laneC) {
+          this.score += 1500
+          this.lights.laneA = this.lights.laneB = this.lights.laneC = false
+          this.lights.ramp = true // lanes light the ramp bonus
+          this.lightShow = { t: this.time, x: 280, y: 150 }
+          this.onSfx('bonus')
+        }
+      }
+    } else if (b.p.y > RAMP_ENTRY.yBot && b.p.x < 280) {
+      b.layer = 'main' // too slow — fell back out the entrance
+    } else if (b.p.y > RAMP_EXIT_Y && b.p.x > 280) {
+      b.layer = 'main'
+      this.rampComplete()
+    }
+  }
+
+  private rampComplete(): void {
+    if (this.lights.ramp) {
+      this.score += 2000
+      this.lights.ramp = false
+    } else {
+      this.score += 750
+    }
+    this.lightShow = { t: this.time, x: 485, y: RAMP_EXIT_Y }
+    this.onSfx('bonus')
   }
 
   private handleEvent(ev: CollisionEvent): void {
@@ -128,6 +189,8 @@ export class Game {
     this.score = 0
     this.ballNum = 1
     this.hitTimes.clear()
+    this.lights = { laneA: false, laneB: false, laneC: false, ramp: false }
+    this.lightShow = null
     this.respawn()
   }
 }

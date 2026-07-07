@@ -10,9 +10,26 @@ export const LANE_X = 496
 export const WALL_L = 20
 export const WALL_R = 540
 
+export interface RolloverDef {
+  c: Vec2
+  r: number
+  id: 'laneA' | 'laneB' | 'laneC'
+  label: string
+}
+
+/**
+ * Ramp entry/exit zones. The ramp runs up the left side, over the top arc
+ * (elevated above bumpers and lanes), and down to an exit above the right
+ * inlane. Entry requires upward speed; a slow ball falls back out the entrance.
+ */
+export const RAMP_ENTRY = { x: 75, halfW: 17, yTop: 515, yBot: 555 }
+export const RAMP_EXIT_Y = 445
+
 export interface Table {
   statics: Collider[]
+  rampWalls: Collider[]
   bumpers: CircleCollider[]
+  rollovers: RolloverDef[]
   flippers: [Flipper, Flipper]
   spawn: Vec2
   drainY: number
@@ -59,6 +76,40 @@ export function buildTable(): Table {
     seg(c, a, MAT.wall, `${id}-body`)
   }
 
+  // Shooter guide: an inner arc curving the top of the plunger lane so the
+  // launched ball enters the main arc tangentially and hugs it over the top
+  // instead of chord-bouncing unpredictably. Radius 217 keeps the channel the
+  // same width as the lane. The arc stops at θ352° — short of the gate — so a
+  // failed plunge rolls off the gate and drops back to the playfield instead
+  // of wedging in the guide/gate corner.
+  statics.push(...arcSegments(v2(280, 280), 217, deg(300), deg(352), 12, MAT.wall))
+
+  // Rollover lanes: three A-B-C lanes between four dividers at the top.
+  // The region under the arc is a pocket whose only exits are the lanes: the
+  // orbiting ball hits the left deflector and slides down into them. On the
+  // right, the shooter guide meets the outer divider's top, sealing that side.
+  for (const x of [235, 295, 355, 415]) seg(v2(x, 112), v2(x, 188))
+  // The deflector ends just above the divider tops (gap < ball diameter, so
+  // nothing slips behind it): the ball leaves it ballistically and carries
+  // into A, B, or C depending on remaining speed — the skill shot.
+  seg(v2(113, 81), v2(235, 95)) // left deflector
+  const rollovers: RolloverDef[] = [
+    { c: v2(265, 150), r: 10, id: 'laneA', label: 'A' },
+    { c: v2(325, 150), r: 10, id: 'laneB', label: 'B' },
+    { c: v2(385, 150), r: 10, id: 'laneC', label: 'C' },
+  ]
+
+  // Ramp walls (separate collision layer). The straight channels are tangent
+  // to the concentric top arcs: outer x = 280 ± 222, inner x = 280 ± 188.
+  const rampWalls: Collider[] = [
+    { kind: 'segment', a: v2(58, 545), b: v2(58, 280), mat: MAT.wall },
+    { kind: 'segment', a: v2(92, 545), b: v2(92, 280), mat: MAT.wall },
+    ...arcSegments(v2(280, 280), 222, Math.PI, 2 * Math.PI, 30, MAT.wall),
+    ...arcSegments(v2(280, 280), 188, Math.PI, 2 * Math.PI, 26, MAT.wall),
+    { kind: 'segment', a: v2(502, 280), b: v2(502, 455), mat: MAT.wall },
+    { kind: 'segment', a: v2(468, 280), b: v2(468, 445), mat: MAT.wall },
+  ]
+
   const bumpers: CircleCollider[] = [
     { kind: 'circle', c: v2(170, 340), r: 30, mat: MAT.bumper, id: 'bumper0' },
     { kind: 'circle', c: v2(390, 340), r: 30, mat: MAT.bumper, id: 'bumper1' },
@@ -70,5 +121,5 @@ export function buildTable(): Table {
     new Flipper(v2(348, 856), 74, deg(148), deg(206)),
   ]
 
-  return { statics, bumpers, flippers, spawn: v2(518, 880), drainY: 950 }
+  return { statics, rampWalls, bumpers, rollovers, flippers, spawn: v2(518, 880), drainY: 950 }
 }

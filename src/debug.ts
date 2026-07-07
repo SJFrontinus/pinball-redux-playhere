@@ -38,6 +38,7 @@ export function renderDebug(ctx: CanvasRenderingContext2D, game: Game, stepsPerF
     `speed ${len(ball.v).toFixed(0)} px/s`,
     `pos ${ball.p.x.toFixed(0)}, ${ball.p.y.toFixed(0)}`,
     `phase ${game.phase}`,
+    `layer ${game.ball.layer}`,
     `steps/frame ${stepsPerFrame}`,
   ]
   lines.forEach((l, i) => ctx.fillText(l, 8, 8 + i * 17))

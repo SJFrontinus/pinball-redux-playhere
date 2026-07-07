@@ -3,15 +3,15 @@ import { Vec2, v2, add, scale } from './vec2'
 export interface Material {
   /** Coefficient of restitution (bounciness). */
   e: number
-  /** Tangential friction: fraction of tangential relative velocity removed per bounce. */
+  /** Coulomb friction coefficient μ (tangential impulse ≤ μ · normal impulse). */
   f: number
 }
 
 export const MAT = {
-  wall: { e: 0.45, f: 0.04 },
-  rubber: { e: 0.88, f: 0.05 },
-  flipper: { e: 0.4, f: 0.1 },
-  sling: { e: 0.6, f: 0.05 },
+  wall: { e: 0.45, f: 0.12 },
+  rubber: { e: 0.88, f: 0.25 },
+  flipper: { e: 0.4, f: 0.3 },
+  sling: { e: 0.6, f: 0.2 },
   bumper: { e: 0.7, f: 0.0 },
 } as const satisfies Record<string, Material>
 

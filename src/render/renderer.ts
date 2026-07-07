@@ -1,7 +1,9 @@
-import { Game } from '../game/state'
-import { TABLE_W, TABLE_H, LANE_X, WALL_R } from '../table/layout'
+import { Game, LightId } from '../game/state'
+import { TABLE_W, TABLE_H, LANE_X, WALL_R, RAMP_ENTRY } from '../table/layout'
 
 const FLASH_DURATION = 0.15
+const LIGHT_SHOW_DURATION = 1.2
+const TRAIL_LENGTH = 22
 
 const COLORS = {
   bg: '#0f1420',
@@ -14,6 +16,87 @@ const COLORS = {
   flipper: '#ffd75e',
   ball: '#e8ecf2',
   plunger: '#9aa7c7',
+  ramp: '#3ec6d8',
+  lampLit: '#ffd75e',
+  lampOff: '#454e70',
+}
+
+/** Recent ball positions for the motion trail (render-side state only). */
+const trail: Array<{ x: number; y: number }> = []
+
+function pushTrail(game: Game): void {
+  const p = game.ball.p
+  const last = trail[trail.length - 1]
+  // A large jump means respawn/teleport — restart the trail.
+  if (!game.ball.active || (last && Math.hypot(p.x - last.x, p.y - last.y) > 100)) {
+    trail.length = 0
+  }
+  if (game.ball.active) trail.push({ x: p.x, y: p.y })
+  if (trail.length > TRAIL_LENGTH) trail.shift()
+}
+
+/** During a light show, lamps strobe in a chase pattern. */
+function lampLit(game: Game, id: LightId, index: number): boolean {
+  if (game.lightShow) {
+    const age = game.time - game.lightShow.t
+    if (age < LIGHT_SHOW_DURATION) return (Math.floor(age * 8) + index) % 2 === 0
+  }
+  return game.lights[id]
+}
+
+function drawLamp(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, lit: boolean, label?: string): void {
+  ctx.beginPath()
+  ctx.arc(x, y, r, 0, Math.PI * 2)
+  if (lit) {
+    ctx.save()
+    ctx.shadowColor = COLORS.lampLit
+    ctx.shadowBlur = 16
+    ctx.fillStyle = COLORS.lampLit
+    ctx.fill()
+    ctx.restore()
+  } else {
+    ctx.strokeStyle = COLORS.lampOff
+    ctx.lineWidth = 2
+    ctx.stroke()
+  }
+  if (label) {
+    ctx.font = 'bold 12px ui-monospace, monospace'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillStyle = lit ? '#3a3208' : COLORS.lampOff
+    ctx.fillText(label, x, y + 0.5)
+  }
+}
+
+function drawBall(ctx: CanvasRenderingContext2D, game: Game): void {
+  const { p, r: baseR, layer } = game.ball
+  const onRamp = layer === 'ramp'
+  const r = onRamp ? baseR * 1.3 : baseR
+
+  for (let i = 0; i < trail.length; i++) {
+    const k = i / trail.length
+    ctx.globalAlpha = 0.3 * k * k
+    ctx.fillStyle = '#9fc4ff'
+    ctx.beginPath()
+    ctx.arc(trail[i].x, trail[i].y, r * (0.3 + 0.6 * k), 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.globalAlpha = 1
+
+  if (onRamp) {
+    // Drop shadow sells the elevation.
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)'
+    ctx.beginPath()
+    ctx.ellipse(p.x + 3, p.y + 8, r * 0.9, r * 0.5, 0, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  const grad = ctx.createRadialGradient(p.x - r * 0.35, p.y - r * 0.35, r * 0.15, p.x, p.y, r)
+  grad.addColorStop(0, '#ffffff')
+  grad.addColorStop(1, '#9aa4b8')
+  ctx.fillStyle = grad
+  ctx.beginPath()
+  ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
+  ctx.fill()
 }
 
 function flash(game: Game, id: string): number {
@@ -93,15 +176,68 @@ export function render(ctx: CanvasRenderingContext2D, game: Game): void {
   ctx.fillRect(LANE_X + 6, plungerTop, WALL_R - LANE_X - 12, 14)
   ctx.fillRect(LANE_X + 16, plungerTop + 14, WALL_R - LANE_X - 32, TABLE_H - plungerTop - 14)
 
-  // Ball.
-  if (game.ball.active) {
-    const { p, r } = game.ball
-    const grad = ctx.createRadialGradient(p.x - r * 0.35, p.y - r * 0.35, r * 0.15, p.x, p.y, r)
-    grad.addColorStop(0, '#ffffff')
-    grad.addColorStop(1, '#9aa4b8')
-    ctx.fillStyle = grad
-    ctx.beginPath()
-    ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
+  // Lamps: rollover letters and the ramp arrow at the entrance.
+  game.table.rollovers.forEach((ro, i) => {
+    drawLamp(ctx, ro.c.x, ro.c.y, ro.r, lampLit(game, ro.id, i), ro.label)
+  })
+  const rampOn = lampLit(game, 'ramp', 3)
+  ctx.beginPath()
+  ctx.moveTo(RAMP_ENTRY.x, 572)
+  ctx.lineTo(RAMP_ENTRY.x - 9, 592)
+  ctx.lineTo(RAMP_ENTRY.x + 9, 592)
+  ctx.closePath()
+  if (rampOn) {
+    ctx.save()
+    ctx.shadowColor = COLORS.lampLit
+    ctx.shadowBlur = 16
+    ctx.fillStyle = COLORS.lampLit
     ctx.fill()
+    ctx.restore()
+  } else {
+    ctx.strokeStyle = COLORS.lampOff
+    ctx.lineWidth = 2
+    ctx.stroke()
+  }
+
+  pushTrail(game)
+  const onRamp = game.ball.layer === 'ramp'
+  if (game.ball.active && !onRamp) drawBall(ctx, game)
+
+  // Ramp walls sit above the playfield (and above a main-layer ball).
+  ctx.save()
+  ctx.globalAlpha = onRamp ? 0.9 : 0.4
+  ctx.strokeStyle = COLORS.ramp
+  ctx.lineWidth = 4
+  for (const col of game.table.rampWalls) {
+    if (col.kind !== 'segment') continue
+    ctx.beginPath()
+    ctx.moveTo(col.a.x, col.a.y)
+    ctx.lineTo(col.b.x, col.b.y)
+    ctx.stroke()
+  }
+  ctx.restore()
+  if (game.ball.active && onRamp) drawBall(ctx, game)
+
+  // Light show: expanding rings from the award, plus a brief GI flash.
+  if (game.lightShow) {
+    const age = game.time - game.lightShow.t
+    if (age < LIGHT_SHOW_DURATION) {
+      const { x, y } = game.lightShow
+      for (const delay of [0, 0.18]) {
+        const a = age - delay
+        if (a < 0) continue
+        ctx.globalAlpha = 0.6 * (1 - a / LIGHT_SHOW_DURATION)
+        ctx.strokeStyle = COLORS.lampLit
+        ctx.lineWidth = 6
+        ctx.beginPath()
+        ctx.arc(x, y, 30 + a * 380, 0, Math.PI * 2)
+        ctx.stroke()
+      }
+      ctx.globalAlpha = 1
+      if (age < 0.35) {
+        ctx.fillStyle = `rgba(255, 220, 140, ${0.13 * (1 - age / 0.35)})`
+        ctx.fillRect(0, 0, TABLE_W, TABLE_H)
+      }
+    }
   }
 }

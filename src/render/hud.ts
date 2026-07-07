@@ -6,12 +6,13 @@ export function renderHud(ctx: CanvasRenderingContext2D, game: Game): void {
 
   ctx.font = 'bold 30px ui-monospace, monospace'
   ctx.fillStyle = '#f2e9c9'
-  ctx.textAlign = 'center'
-  ctx.fillText(String(game.score).padStart(7, '0'), TABLE_W / 2, 96)
+  ctx.textAlign = 'left'
+  ctx.fillText(String(game.score).padStart(7, '0'), 16, 938)
 
   ctx.font = '16px ui-monospace, monospace'
   ctx.fillStyle = '#8c96b3'
-  ctx.fillText(`BALL ${game.ballNum} / 3`, TABLE_W / 2, 134)
+  ctx.textAlign = 'right'
+  ctx.fillText(`BALL ${game.ballNum} / 3`, 480, 948)
 
   ctx.font = '18px ui-monospace, monospace'
   ctx.textAlign = 'center'

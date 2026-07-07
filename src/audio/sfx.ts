@@ -14,9 +14,10 @@ function blip(
   type: OscillatorType = 'sine',
   vol = 0.25,
   freqEnd?: number,
+  delay = 0,
 ): void {
   if (!ctx || ctx.state !== 'running') return
-  const t = ctx.currentTime
+  const t = ctx.currentTime + delay
   const osc = ctx.createOscillator()
   const gain = ctx.createGain()
   osc.type = type
@@ -52,6 +53,17 @@ export function playSfx(name: SfxName): void {
       break
     case 'drain':
       blip(500, 0.5, 'triangle', 0.3, 90)
+      break
+    case 'rollover':
+      blip(1200, 0.05, 'sine', 0.22)
+      break
+    case 'ramp':
+      blip(300, 0.3, 'sawtooth', 0.22, 1400)
+      break
+    case 'bonus':
+      blip(660, 0.09, 'square', 0.24)
+      blip(880, 0.09, 'square', 0.24, undefined, 0.09)
+      blip(1320, 0.14, 'square', 0.26, undefined, 0.18)
       break
   }
 }
