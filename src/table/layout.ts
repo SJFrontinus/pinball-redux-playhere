@@ -47,10 +47,11 @@ export function buildTable(): Table {
   statics.push({ kind: 'circle', c: v2(110, 610), r: 11, mat: MAT.rubber, id: 'post' })
   statics.push({ kind: 'circle', c: v2(420, 610), r: 11, mat: MAT.rubber, id: 'post' })
 
-  // Slingshots: triangles above the flippers; the long face kicks.
+  // Slingshots: triangles sitting flush on the funnel walls (no pocket
+  // behind them for the ball to wedge into); the upper face kicks.
   const slings: Array<[Vec2, Vec2, Vec2, string]> = [
-    [v2(140, 715), v2(208, 815), v2(140, 795), 'slingL'],
-    [v2(376, 715), v2(308, 815), v2(376, 795), 'slingR'],
+    [v2(84, 731), v2(185, 790), v2(136, 806), 'slingL'],
+    [v2(432, 731), v2(331, 790), v2(380, 806), 'slingR'],
   ]
   for (const [a, b, c, id] of slings) {
     seg(a, b, MAT.sling, id) // active face

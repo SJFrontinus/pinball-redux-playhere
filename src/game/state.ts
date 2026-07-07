@@ -70,7 +70,7 @@ export class Game {
       this.score += 100
       this.hitTimes.set(id, this.time)
       this.onSfx('bumper')
-    } else if ((id === 'slingL' || id === 'slingR') && !onCooldown) {
+    } else if ((id === 'slingL' || id === 'slingR') && !onCooldown && ev.impact > 140) {
       this.ball.v = add(this.ball.v, scale(ev.n, SLING_KICK))
       this.score += 50
       this.hitTimes.set(id, this.time)

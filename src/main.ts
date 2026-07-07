@@ -10,6 +10,8 @@ const ctx = canvas.getContext('2d')!
 
 const game = new Game()
 game.onSfx = playSfx
+// Exposed for scripted testing and console poking.
+;(window as unknown as { game: Game }).game = game
 let debug = false
 
 const LEFT_KEYS = new Set(['ShiftLeft', 'KeyZ'])
