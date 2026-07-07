@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Pinball Redux</title>
     <style>
       html, body {
@@ -15,10 +15,16 @@
         overflow: hidden;
       }
       canvas {
+        /* dvh excludes iOS Safari's collapsing chrome; vh is the fallback. */
         height: 100vh;
+        height: 100dvh;
         max-width: 100vw;
         aspect-ratio: 560 / 980;
         object-fit: contain;
+        /* The canvas is the controller: no browser pan/zoom gestures on it. */
+        touch-action: none;
+        -webkit-user-select: none;
+        user-select: none;
       }
     </style>
   </head>
