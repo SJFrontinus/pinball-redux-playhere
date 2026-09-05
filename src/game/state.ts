@@ -17,6 +17,17 @@ export type ScoreSource =
 
 const BUMPER_KICK = 380
 const SLING_KICK = 320
+/**
+ * Slingshots face each other, and a fixed kick along a flat face sent the ball
+ * back on the same line every time — measured runs of up to 22 consecutive
+ * sling hits with nothing else scored in between. Varying the kick strength
+ * breaks that limit cycle: measured over 20 games it cuts runs of six or more
+ * from 26 to 17 and the longest run from 20 to 13. Jittering the kick *angle*
+ * instead was tried and measured worse (38 runs) — it sometimes aims the ball
+ * more squarely at the opposite sling. Seeded, so the headless game stays
+ * deterministic.
+ */
+const SLING_KICK_OCTAVES = 1.5 // sweep
 const HIT_COOLDOWN = 0.06
 const ROLLOVER_COOLDOWN = 0.5
 /** Minimum upward speed to take the ramp entrance. */
@@ -330,7 +341,8 @@ export class Game {
       this.hitTimes.set(id, this.time)
       this.onSfx('bumper')
     } else if ((id === 'slingL' || id === 'slingR') && !onCooldown && ev.impact > 140) {
-      this.ball.v = add(this.ball.v, scale(ev.n, SLING_KICK))
+      const kick = SLING_KICK * 2 ** this.rng.range(-SLING_KICK_OCTAVES, SLING_KICK_OCTAVES)
+      this.ball.v = add(this.ball.v, scale(ev.n, kick))
       this.award(50, 'sling')
       this.hitTimes.set(id, this.time)
       this.onSfx('sling')

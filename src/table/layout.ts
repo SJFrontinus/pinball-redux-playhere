@@ -213,7 +213,10 @@ export function buildTable(): Table {
   // found by the multi-seed sim, not by eye.
   seg(v2(421, 520), v2(449, 510), MAT.wall, 'bank-body')
   seg(v2(449, 510), v2(449, 580), MAT.wall, 'bank-body')
-  seg(v2(449, 580), v2(421, 580), MAT.wall, 'bank-body')
+  // Deliberately no floor. With two targets down the ball fits inside the box,
+  // and a flat floor held it there forever — the depth does not matter, since
+  // the ball only needs support from below. Open-bottomed, it drops back onto
+  // the playfield instead.
   const bankCentre = v2(435, 550)
 
   // Standup targets flanking the kickout, tilted toward the centre so a ball
