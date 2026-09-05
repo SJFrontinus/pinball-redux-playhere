@@ -1,0 +1,26 @@
+/**
+ * Seeded PRNG (mulberry32). All in-game randomness goes through a `Game`-owned
+ * instance so the headless full-game simulation stays deterministic. Nothing
+ * else in the codebase may call `Math.random`.
+ */
+export class Rng {
+  private s: number
+
+  constructor(seed: number) {
+    this.s = seed >>> 0
+  }
+
+  /** Uniform in [0, 1). */
+  next(): number {
+    this.s = (this.s + 0x6d2b79f5) >>> 0
+    let t = this.s
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+
+  /** Uniform in [lo, hi). */
+  range(lo: number, hi: number): number {
+    return lo + (hi - lo) * this.next()
+  }
+}

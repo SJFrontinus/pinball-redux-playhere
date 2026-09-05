@@ -3,12 +3,17 @@ import { Collider } from '../physics/colliders'
 import { Ball, makeBall } from '../physics/ball'
 import { stepBall, CollisionEvent } from '../physics/world'
 import { buildTable, LANE_X, RAMP_ENTRY, RAMP_EXIT_Y, Table } from '../table/layout'
+import { Rng } from './rng'
+import { InputEvent } from './replay'
 
 export type Phase = 'ready' | 'playing' | 'gameover'
 export type SfxName =
   | 'flipper' | 'bumper' | 'sling' | 'post' | 'launch' | 'drain' | 'wall'
   | 'rollover' | 'ramp' | 'bonus'
 export type LightId = 'laneA' | 'laneB' | 'laneC' | 'ramp'
+/** Where points came from; drives lamps, callouts and the end-of-ball bonus. */
+export type ScoreSource =
+  | 'bumper' | 'sling' | 'post' | 'rollover' | 'lanes' | 'ramp' | 'rampLit'
 
 const BUMPER_KICK = 380
 const SLING_KICK = 320
@@ -20,6 +25,7 @@ const PLUNGE_MIN = 950
 const PLUNGE_RANGE = 1250
 const CHARGE_TIME = 1.1
 const TOTAL_BALLS = 3
+export const DEFAULT_SEED = 0x0d75_5e75 // Odysseus
 
 export class Game {
   table: Table = buildTable()
@@ -38,9 +44,21 @@ export class Game {
   /** Events from the most recent frame, for the debug overlay. */
   lastEvents: CollisionEvent[] = []
   onSfx: (name: SfxName) => void = () => {}
+  /** The only source of randomness in the game (constraint: determinism). */
+  rng: Rng
+  /** Input log for replay; recorded only while `record` is set. */
+  record = false
+  log: InputEvent[] = []
 
-  constructor() {
+  constructor(readonly seed: number = DEFAULT_SEED) {
+    this.rng = new Rng(seed)
     this.ball = makeBall({ ...this.table.spawn })
+  }
+
+  /** Single scoring entry point. Every point on the table passes through here. */
+  award(points: number, source: ScoreSource): void {
+    void source // consumed by multipliers and bonus tallies in later steps
+    this.score += points
   }
 
   ballInLane(): boolean {
@@ -91,11 +109,11 @@ export class Game {
         const last = this.hitTimes.get(ro.id) ?? -Infinity
         if (this.time - last < ROLLOVER_COOLDOWN) continue
         this.hitTimes.set(ro.id, this.time)
-        this.score += 150
+        this.award(150, 'rollover')
         this.lights[ro.id] = true
         this.onSfx('rollover')
         if (this.lights.laneA && this.lights.laneB && this.lights.laneC) {
-          this.score += 1500
+          this.award(1500, 'lanes')
           this.lights.laneA = this.lights.laneB = this.lights.laneC = false
           this.lights.ramp = true // lanes light the ramp bonus
           this.lightShow = { t: this.time, x: 280, y: 150 }
@@ -112,10 +130,10 @@ export class Game {
 
   private rampComplete(): void {
     if (this.lights.ramp) {
-      this.score += 2000
+      this.award(2000, 'rampLit')
       this.lights.ramp = false
     } else {
-      this.score += 750
+      this.award(750, 'ramp')
     }
     this.lightShow = { t: this.time, x: 485, y: RAMP_EXIT_Y }
     this.onSfx('bonus')
@@ -128,16 +146,16 @@ export class Game {
 
     if (id.startsWith('bumper') && !onCooldown) {
       this.ball.v = add(this.ball.v, scale(ev.n, BUMPER_KICK))
-      this.score += 100
+      this.award(100, 'bumper')
       this.hitTimes.set(id, this.time)
       this.onSfx('bumper')
     } else if ((id === 'slingL' || id === 'slingR') && !onCooldown && ev.impact > 140) {
       this.ball.v = add(this.ball.v, scale(ev.n, SLING_KICK))
-      this.score += 50
+      this.award(50, 'sling')
       this.hitTimes.set(id, this.time)
       this.onSfx('sling')
     } else if (id === 'post' && !onCooldown && ev.impact > 120) {
-      this.score += 10
+      this.award(10, 'post')
       this.hitTimes.set(id, this.time)
       this.onSfx('post')
     } else if (id === 'wall' && !onCooldown && ev.impact > 500) {
@@ -147,12 +165,18 @@ export class Game {
   }
 
   setFlipper(side: 'left' | 'right', pressed: boolean): void {
-    const f = this.table.flippers[side === 'left' ? 0 : 1]
-    if (pressed && !f.pressed) this.onSfx('flipper')
-    f.pressed = pressed
+    if (this.record) this.log.push({ t: this.time, kind: 'flipper', side, pressed })
+    let changed = false
+    for (const f of this.table.flippers) {
+      if (f.side !== side) continue
+      if (pressed && !f.pressed) changed = true
+      f.pressed = pressed
+    }
+    if (changed) this.onSfx('flipper')
   }
 
   setPlunger(held: boolean): void {
+    if (this.record) this.log.push({ t: this.time, kind: 'plunger', pressed: held })
     if (this.phase === 'gameover') return
     if (!held && this.plungerHeld) this.release()
     if (held && !this.plungerHeld) this.charge = 0
@@ -186,6 +210,9 @@ export class Game {
   }
 
   restart(): void {
+    this.rng = new Rng(this.seed)
+    this.log = []
+    this.time = 0
     this.score = 0
     this.ballNum = 1
     this.hitTimes.clear()

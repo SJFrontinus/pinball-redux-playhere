@@ -1,4 +1,5 @@
 import { Game } from './game/state'
+import { dump } from './game/replay'
 import { startLoop } from './loop'
 import { render } from './render/renderer'
 import { renderHud } from './render/hud'
@@ -10,8 +11,12 @@ const ctx = canvas.getContext('2d')!
 
 const game = new Game()
 game.onSfx = playSfx
-// Exposed for scripted testing and console poking.
-;(window as unknown as { game: Game }).game = game
+game.record = true
+// Exposed for scripted testing and console poking. `dumpReplay()` returns a
+// seed + input log that reproduces the current game headlessly (see replay.ts).
+const w = window as unknown as { game: Game; dumpReplay: () => string }
+w.game = game
+w.dumpReplay = () => dump(game)
 let debug = false
 
 const LEFT_KEYS = new Set(['ShiftLeft', 'KeyZ'])

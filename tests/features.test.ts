@@ -91,3 +91,54 @@ describe('rollovers', () => {
     expect(game.score).toBe(150)
   })
 })
+
+describe('upper flippers', () => {
+  test('the table has two flippers per side', () => {
+    const game = new Game()
+    const left = game.table.flippers.filter((f) => f.side === 'left')
+    const right = game.table.flippers.filter((f) => f.side === 'right')
+    expect(left.length).toBe(2)
+    expect(right.length).toBe(2)
+  })
+
+  test('one button drives every flipper of that side', () => {
+    const game = new Game()
+    game.setFlipper('left', true)
+    for (const f of game.table.flippers) expect(f.pressed).toBe(f.side === 'left')
+    game.setFlipper('left', false)
+    game.setFlipper('right', true)
+    for (const f of game.table.flippers) expect(f.pressed).toBe(f.side === 'right')
+  })
+
+  test('a ball dropped onto the upper left flipper is launched upward by the button', () => {
+    const game = new Game()
+    const upper = game.table.flippers.find((f) => f.side === 'left' && f.pivot.y < 600)!
+    // Drop the ball onto the flipper's mid-span and let it settle briefly.
+    place(game, upper.pivot.x + 30, upper.pivot.y - 40, 0, 0)
+    for (let i = 0; i < 150; i++) game.step(DT)
+    expect(game.ball.p.y).toBeLessThan(upper.pivot.y + 40) // it is resting on the flipper, not past it
+    game.setFlipper('left', true)
+    let minVy = Infinity
+    for (let i = 0; i < 300; i++) {
+      game.step(DT)
+      minVy = Math.min(minVy, game.ball.v.y)
+    }
+    expect(minVy).toBeLessThan(-600) // a real launch, not a nudge
+  })
+
+  test('a ball dropped behind the upper right pivot slides off the guide rail and keeps moving', () => {
+    const game = new Game()
+    place(game, 395, 440, 0, 0)
+    let lastMove = 0
+    let last = { ...game.ball.p }
+    for (let i = 0; i < 3000; i++) {
+      game.step(DT)
+      if (Math.hypot(game.ball.p.x - last.x, game.ball.p.y - last.y) > 3) {
+        last = { ...game.ball.p }
+        lastMove = i
+      }
+    }
+    expect(3000 - lastMove).toBeLessThan(1500) // moved within the last 1.5 s
+    expect(game.ball.p.y).toBeGreaterThan(600) // it fell through to the lower table
+  })
+})

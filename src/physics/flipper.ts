@@ -7,6 +7,8 @@ import { CapsuleCollider, MAT } from './colliders'
  * (ω × r), which the collision response transfers to the ball — that transfer
  * is what makes a flipper launch rather than merely deflect.
  */
+export type FlipperSide = 'left' | 'right'
+
 export class Flipper {
   angle: number
   angVel = 0
@@ -17,6 +19,8 @@ export class Flipper {
     readonly length: number,
     readonly restAngle: number,
     readonly raisedAngle: number,
+    /** Which button drives it. Upper flippers share the button of their side. */
+    readonly side: FlipperSide,
     /** Angular speed in rad/s while moving. */
     readonly omega = 34,
     readonly thickness = 11,

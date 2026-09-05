@@ -30,7 +30,8 @@ export interface Table {
   rampWalls: Collider[]
   bumpers: CircleCollider[]
   rollovers: RolloverDef[]
-  flippers: [Flipper, Flipper]
+  /** Lower pair first, then any upper flippers. Driven by side, not index. */
+  flippers: Flipper[]
   spawn: Vec2
   drainY: number
 }
@@ -116,9 +117,21 @@ export function buildTable(): Table {
     { kind: 'circle', c: v2(280, 460), r: 30, mat: MAT.bumper, id: 'bumper2' },
   ]
 
-  const flippers: [Flipper, Flipper] = [
-    new Flipper(v2(168, 856), 74, deg(32), deg(-26)),
-    new Flipper(v2(348, 856), 74, deg(148), deg(206)),
+  // Upper flipper guide rails. Each runs from the pivot up and outward, as on
+  // a real machine: nothing can wrap behind the flipper and settle on the
+  // pivot end, and a ball dropping down either side is fed onto the flipper.
+  // Steep and short so they do not pocket against the mid-table fixtures.
+  seg(v2(150, 505), v2(133, 452))
+  seg(v2(385, 505), v2(402, 452))
+
+  const flippers: Flipper[] = [
+    new Flipper(v2(168, 856), 74, deg(32), deg(-26), 'left'),
+    new Flipper(v2(348, 856), 74, deg(148), deg(206), 'right'),
+    // Upper pair flanking the middle bumper. Length 52 keeps the raised right
+    // tip a ball-width clear of the bumper (the pivots are asymmetric because
+    // the drop target alley on the right needs the room).
+    new Flipper(v2(150, 505), 52, deg(32), deg(-26), 'left'),
+    new Flipper(v2(385, 505), 52, deg(148), deg(206), 'right'),
   ]
 
   return { statics, rampWalls, bumpers, rollovers, flippers, spawn: v2(518, 880), drainY: 950 }
