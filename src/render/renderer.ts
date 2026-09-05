@@ -19,6 +19,7 @@ const COLORS = {
   ramp: '#3ec6d8',
   lampLit: '#ffd75e',
   lampOff: '#454e70',
+  target: '#e0607a',
 }
 
 /** Recent ball positions for the motion trail (render-side state only). */
@@ -118,13 +119,26 @@ export function render(ctx: CanvasRenderingContext2D, game: Game): void {
     if (col.kind === 'segment') {
       const id = col.id ?? ''
       const isSling = id === 'slingL' || id === 'slingR'
-      const slingFlash = isSling ? flash(game, id) : 0
+      const isTarget = id.startsWith('drop') || id.startsWith('stand')
+      const hitFlash = isSling || isTarget ? flash(game, id) : 0
+      if (col.active === false) {
+        // Dropped target: a dim stub flush with the bank body.
+        ctx.strokeStyle = COLORS.lampOff
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.moveTo(col.a.x + 6, col.a.y + 3)
+        ctx.lineTo(col.b.x + 6, col.b.y - 3)
+        ctx.stroke()
+        continue
+      }
       ctx.strokeStyle =
         id === 'gate' ? COLORS.gate
-        : isSling ? (slingFlash > 0 ? '#ffffff' : COLORS.sling)
+        : isSling ? (hitFlash > 0 ? '#ffffff' : COLORS.sling)
+        : isTarget ? (hitFlash > 0 ? '#ffffff' : COLORS.target)
+        : id === 'bank-body' ? COLORS.gate
         : id.endsWith('-body') ? COLORS.sling
         : COLORS.wall
-      ctx.lineWidth = isSling ? 6 : 5
+      ctx.lineWidth = isSling ? 6 : isTarget ? 7 : id === 'bank-body' ? 3 : 5
       if (id === 'gate') {
         ctx.setLineDash([6, 6])
         ctx.lineWidth = 3
@@ -157,6 +171,50 @@ export function render(ctx: CanvasRenderingContext2D, game: Game): void {
     ctx.arc(b.c.x, b.c.y, b.r * 0.45, 0, Math.PI * 2)
     ctx.fillStyle = f > 0 ? '#f2b134' : '#8c2f22'
     ctx.fill()
+  }
+
+  // Kickout hole: a recessed disc whose rim pulses while the ball is held so
+  // the countdown reads, and flashes on the kick.
+  {
+    const k = game.table.kickout
+    const held = game.capture !== null
+    const kickFlash = flash(game, k.id)
+    const pulse = held ? 0.5 + 0.5 * Math.sin(game.time * 14) : 0
+    const hole = ctx.createRadialGradient(k.c.x, k.c.y, 2, k.c.x, k.c.y, k.r + 4)
+    hole.addColorStop(0, '#05070d')
+    hole.addColorStop(1, '#1a2133')
+    ctx.fillStyle = hole
+    ctx.beginPath()
+    ctx.arc(k.c.x, k.c.y, k.r + 4, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.lineWidth = 3
+    ctx.strokeStyle = kickFlash > 0 ? '#ffffff' : held ? `rgba(255, 215, 94, ${0.4 + 0.6 * pulse})` : COLORS.rubber
+    ctx.stroke()
+  }
+
+  // Spinner: a blade rotating about a horizontal axle, seen from above, so its
+  // visible height is |cos| of the angle. Glows while it spins.
+  {
+    const sp = game.table.spinner
+    const mid = { x: (sp.a.x + sp.b.x) / 2, y: (sp.a.y + sp.b.y) / 2 }
+    const halfW = (sp.b.x - sp.a.x) / 2
+    const c = Math.cos(game.spinner.angle * Math.PI * 2)
+    const spinning = game.spinner.rate !== 0
+    ctx.strokeStyle = '#5a6788'
+    ctx.lineWidth = 3
+    ctx.beginPath()
+    ctx.moveTo(sp.a.x - 3, sp.a.y)
+    ctx.lineTo(sp.b.x + 3, sp.b.y)
+    ctx.stroke()
+    if (spinning) {
+      ctx.save()
+      ctx.shadowColor = COLORS.lampLit
+      ctx.shadowBlur = 12
+    }
+    ctx.fillStyle = spinning ? COLORS.lampLit : COLORS.wall
+    const h = 2 + 9 * Math.abs(c)
+    ctx.fillRect(mid.x - halfW + 2, mid.y - h / 2, halfW * 2 - 4, h)
+    if (spinning) ctx.restore()
   }
 
   // Flippers.

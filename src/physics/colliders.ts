@@ -13,6 +13,7 @@ export const MAT = {
   flipper: { e: 0.4, f: 0.3 },
   sling: { e: 0.6, f: 0.2 },
   bumper: { e: 0.7, f: 0.0 },
+  target: { e: 0.5, f: 0.1 },
 } as const satisfies Record<string, Material>
 
 interface ColliderBase {
@@ -21,6 +22,8 @@ interface ColliderBase {
   id?: string
   /** Surface velocity at a contact point (kinematic bodies, i.e. flippers). */
   velocityAt?: (p: Vec2) => Vec2
+  /** `false` removes the collider from the world (a dropped target). Undefined = active. */
+  active?: boolean
 }
 
 export interface SegmentCollider extends ColliderBase {

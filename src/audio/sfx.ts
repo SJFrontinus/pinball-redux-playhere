@@ -60,6 +60,22 @@ export function playSfx(name: SfxName): void {
     case 'ramp':
       blip(300, 0.3, 'sawtooth', 0.22, 1400)
       break
+    case 'capture':
+      blip(420, 0.18, 'triangle', 0.28, 140)
+      break
+    case 'kick':
+      blip(120, 0.12, 'square', 0.3, 480)
+      blip(1600, 0.04, 'sine', 0.15)
+      break
+    case 'spin':
+      blip(2600, 0.018, 'square', 0.1)
+      break
+    case 'target':
+      blip(1100, 0.05, 'triangle', 0.25)
+      break
+    case 'drop':
+      blip(700, 0.08, 'square', 0.25, 350)
+      break
     case 'bonus':
       blip(660, 0.09, 'square', 0.24)
       blip(880, 0.09, 'square', 0.24, undefined, 0.09)

@@ -1,5 +1,5 @@
 import { v2, norm, Vec2 } from '../physics/vec2'
-import { Collider, CircleCollider, Material, MAT, arcSegments } from '../physics/colliders'
+import { Collider, CircleCollider, SegmentCollider, Material, MAT, arcSegments } from '../physics/colliders'
 import { Flipper } from '../physics/flipper'
 
 export const TABLE_W = 560
@@ -25,11 +25,38 @@ export interface RolloverDef {
 export const RAMP_ENTRY = { x: 75, halfW: 17, yTop: 515, yBot: 555 }
 export const RAMP_EXIT_Y = 445
 
+/**
+ * Kickout hole (saucer): a slow ball dropping over the hole is captured, held
+ * for `holdTime`, then ejected at a seeded-random angle and speed.
+ */
+export interface KickoutDef {
+  c: Vec2
+  r: number
+  id: 'kickout'
+  holdTime: number
+}
+
+/**
+ * Spinner: a pass-through sensor segment. Crossing it spins the blade at a
+ * rate set by the ball's speed; each revolution scores.
+ */
+export interface SpinnerDef {
+  a: Vec2
+  b: Vec2
+  id: 'spinner'
+}
+
 export interface Table {
   statics: Collider[]
   rampWalls: Collider[]
   bumpers: CircleCollider[]
   rollovers: RolloverDef[]
+  kickout: KickoutDef
+  spinner: SpinnerDef
+  /** Drop target bank faces, in order; also present in `statics`. Toggled via `active`. */
+  dropTargets: SegmentCollider[]
+  /** Centre of the bank, for the reset-when-clear check. */
+  bankCentre: Vec2
   /** Lower pair first, then any upper flippers. Driven by side, not index. */
   flippers: Flipper[]
   spawn: Vec2
@@ -117,12 +144,51 @@ export function buildTable(): Table {
     { kind: 'circle', c: v2(280, 460), r: 30, mat: MAT.bumper, id: 'bumper2' },
   ]
 
-  // Upper flipper guide rails. Each runs from the pivot up and outward, as on
-  // a real machine: nothing can wrap behind the flipper and settle on the
-  // pivot end, and a ball dropping down either side is fed onto the flipper.
-  // Steep and short so they do not pocket against the mid-table fixtures.
-  seg(v2(150, 505), v2(133, 452))
-  seg(v2(385, 505), v2(402, 452))
+  // Upper flipper guide rails. Each continues the flipper's rest-position top
+  // surface outward from the pivot, so a ball dropping onto it rolls straight
+  // onto the flipper and nothing can settle on the pivot end. A steeper rail
+  // forms a V with the round pivot cap and cradles the ball — found by the
+  // rail test, not by eye.
+  const rail = (f: Flipper, length: number): void => {
+    const d = v2(Math.cos(f.restAngle), Math.sin(f.restAngle))
+    const n = v2(-d.y, d.x)
+    const up = n.y < 0 ? n : v2(-n.x, -n.y) // perpendicular, pointing up (y-down)
+    const a = v2(f.pivot.x + up.x * f.thickness, f.pivot.y + up.y * f.thickness)
+    seg(a, v2(a.x - d.x * length, a.y - d.y * length))
+  }
+
+  // Kickout hole dead centre below the middle bumper, reachable from both
+  // lower flippers. A sensor, not a collider.
+  const kickout: KickoutDef = { c: v2(280, 560), r: 16, id: 'kickout', holdTime: 1.2 }
+
+  // Spinner across the ramp mouth, just below the entry zone: the ramp shot
+  // rips it on the way up, and a ball that fails the climb spins it again on
+  // the way back down. Sensor only — no collider.
+  const spinner: SpinnerDef = { a: v2(58, 560), b: v2(92, 560), id: 'spinner' }
+
+  // Drop target bank: three 20 px faces at x = 421 facing left, shot from the
+  // lower-left or upper-left flipper. A 20 px gap is narrower than the ball,
+  // so a single dropped target does not open a hole; the body behind (top,
+  // back, bottom) catches the ball if two drop. Top at y = 520 keeps a clear
+  // ball-width between the upper-right rail end (407, 484) and the bank corner;
+  // bottom at 580 leaves 19 px to the rubber post at (420, 610) — sealed.
+  const dropTargets: SegmentCollider[] = [0, 1, 2].map((i) => ({
+    kind: 'segment' as const,
+    a: v2(421, 520 + i * 20),
+    b: v2(421, 540 + i * 20),
+    mat: MAT.target,
+    id: `drop${i}`,
+  }))
+  statics.push(...dropTargets)
+  seg(v2(421, 520), v2(449, 520), MAT.wall, 'bank-body')
+  seg(v2(449, 520), v2(449, 580), MAT.wall, 'bank-body')
+  seg(v2(449, 580), v2(421, 580), MAT.wall, 'bank-body')
+  const bankCentre = v2(435, 550)
+
+  // Standup targets flanking the kickout, tilted toward the centre so a ball
+  // landing on top rolls off instead of balancing on a flat 20 px ledge.
+  seg(v2(205, 552), v2(225, 566), MAT.target, 'standL')
+  seg(v2(355, 552), v2(335, 566), MAT.target, 'standR')
 
   const flippers: Flipper[] = [
     new Flipper(v2(168, 856), 74, deg(32), deg(-26), 'left'),
@@ -133,6 +199,11 @@ export function buildTable(): Table {
     new Flipper(v2(150, 505), 52, deg(32), deg(-26), 'left'),
     new Flipper(v2(385, 505), 52, deg(148), deg(206), 'right'),
   ]
+  rail(flippers[2], 30)
+  rail(flippers[3], 30)
 
-  return { statics, rampWalls, bumpers, rollovers, flippers, spawn: v2(518, 880), drainY: 950 }
+  return {
+    statics, rampWalls, bumpers, rollovers, kickout, spinner, dropTargets, bankCentre, flippers,
+    spawn: v2(518, 880), drainY: 950,
+  }
 }

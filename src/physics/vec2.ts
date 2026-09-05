@@ -25,3 +25,4 @@ export const clampLen = (a: Vec2, max: number): Vec2 => {
   const l = len(a)
   return l > max ? scale(a, max / l) : a
 }
+export const lerp = (a: Vec2, b: Vec2, t: number): Vec2 => v2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
