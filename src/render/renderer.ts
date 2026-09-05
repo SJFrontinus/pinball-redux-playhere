@@ -173,6 +173,26 @@ export function render(ctx: CanvasRenderingContext2D, game: Game): void {
     ctx.fill()
   }
 
+  // Charybdis: rotating arcs, drawn on the playfield under everything else.
+  if (game.hazardLevel > 0) {
+    const w = game.table.whirlpool
+    const level = game.hazardLevel
+    ctx.save()
+    for (let i = 1; i <= 3; i++) {
+      const rr = (w.r * i) / 3.4
+      const spin = game.time * (0.7 + 0.5 * level) * (i % 2 === 0 ? -1 : 1)
+      ctx.globalAlpha = 0.1 + 0.11 * level
+      ctx.strokeStyle = COLORS.ramp
+      ctx.lineWidth = 2.5
+      ctx.setLineDash([rr * 0.9, rr * 0.75])
+      ctx.beginPath()
+      ctx.arc(w.c.x, w.c.y, rr, spin, spin + Math.PI * 2)
+      ctx.stroke()
+    }
+    ctx.restore()
+    ctx.setLineDash([])
+  }
+
   // Kickout hole: a recessed disc whose rim pulses while the ball is held so
   // the countdown reads, and flashes on the kick.
   {
@@ -228,6 +248,24 @@ export function render(ctx: CanvasRenderingContext2D, game: Game): void {
     ctx.stroke()
   }
 
+  // Scylla: the rotor arms, drawn only while it is turning.
+  if (game.table.rotor.rate > 0) {
+    const rot = game.table.rotor
+    const hit = flash(game, 'rotor')
+    ctx.strokeStyle = hit > 0 ? '#ffffff' : COLORS.rubber
+    ctx.lineWidth = rot.thickness * 2
+    for (const arm of rot.colliders()) {
+      ctx.beginPath()
+      ctx.moveTo(arm.a.x, arm.a.y)
+      ctx.lineTo(arm.b.x, arm.b.y)
+      ctx.stroke()
+    }
+    ctx.fillStyle = COLORS.bg
+    ctx.beginPath()
+    ctx.arc(rot.pivot.x, rot.pivot.y, rot.thickness * 0.8, 0, Math.PI * 2)
+    ctx.fill()
+  }
+
   // Plunger head at the bottom of the lane, compressing with charge.
   const plungerTop = 905 + game.charge * 45
   ctx.fillStyle = COLORS.plunger
@@ -238,6 +276,7 @@ export function render(ctx: CanvasRenderingContext2D, game: Game): void {
   game.table.rollovers.forEach((ro, i) => {
     drawLamp(ctx, ro.c.x, ro.c.y, ro.r, lampLit(game, ro.id, i), ro.label)
   })
+  drawLamp(ctx, 104, 848, 7, lampLit(game, 'kickback', 4))
   const rampOn = lampLit(game, 'ramp', 3)
   ctx.beginPath()
   ctx.moveTo(RAMP_ENTRY.x, 572)

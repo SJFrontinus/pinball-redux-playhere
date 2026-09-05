@@ -9,11 +9,11 @@ import { InputEvent } from './replay'
 export type Phase = 'ready' | 'playing' | 'gameover'
 export type SfxName =
   | 'flipper' | 'bumper' | 'sling' | 'post' | 'launch' | 'drain' | 'wall'
-  | 'rollover' | 'ramp' | 'bonus' | 'capture' | 'kick' | 'spin' | 'target' | 'drop'
-export type LightId = 'laneA' | 'laneB' | 'laneC' | 'ramp'
+  | 'rollover' | 'ramp' | 'bonus' | 'capture' | 'kick' | 'spin' | 'target' | 'drop' | 'kickback' | 'rotor'
+export type LightId = 'laneA' | 'laneB' | 'laneC' | 'ramp' | 'kickback'
 /** Where points came from; drives lamps, callouts and the end-of-ball bonus. */
 export type ScoreSource =
-  | 'bumper' | 'sling' | 'post' | 'rollover' | 'lanes' | 'ramp' | 'rampLit' | 'kickout' | 'spinner' | 'standup' | 'drop' | 'bank'
+  | 'bumper' | 'sling' | 'post' | 'rollover' | 'lanes' | 'ramp' | 'rampLit' | 'kickout' | 'spinner' | 'standup' | 'drop' | 'bank' | 'outlane' | 'endOfBall'
 
 const BUMPER_KICK = 380
 const SLING_KICK = 320
@@ -40,6 +40,23 @@ const SPIN_POINTS = 50
 const DROP_IMPACT = 150
 /** The bank pops back up once every target is down and the ball is this far away. */
 const BANK_RESET_CLEARANCE = 60
+/** Left outlane kickback: the zone that triggers it, and the shot it fires. */
+const KICKBACK_ZONE = { yMin: 858, xMin: 90, xMax: 155 }
+const KICKBACK_SPEED = 1200
+/**
+ * Hazards arm progressively, indexed by ball number: off, on, stronger.
+ * Both are well under gravity (1150), so neither can hold the ball up or
+ * overpower a flipper save — they steer, they do not seize.
+ */
+const ROTOR_RATE = [0, 6, 10]
+const WHIRL_PULL = [0, 320, 560]
+const WHIRL_SWIRL = [0, 240, 420]
+/** Scoring events that earn an end-of-ball bonus unit (per-revolution spinner excluded). */
+const BONUS_SOURCES = new Set<ScoreSource>([
+  'rollover', 'lanes', 'ramp', 'rampLit', 'kickout', 'standup', 'drop', 'bank',
+])
+const BONUS_PER_UNIT = 250
+const KICKBACK_ANGLE = (-95 * Math.PI) / 180 // straight up the outlane barrel
 export const DEFAULT_SEED = 0x0d75_5e75 // Odysseus
 
 export class Game {
@@ -53,7 +70,9 @@ export class Game {
   time = 0
   /** id -> last hit time, drives render flashes and event cooldowns. */
   hitTimes = new Map<string, number>()
-  lights: Record<LightId, boolean> = { laneA: false, laneB: false, laneC: false, ramp: false }
+  lights: Record<LightId, boolean> = {
+    laneA: false, laneB: false, laneC: false, ramp: false, kickback: true,
+  }
   /** Set on lane completion / ramp completion; drives the render light show. */
   lightShow: { t: number; x: number; y: number } | null = null
   /** Events from the most recent frame, for the debug overlay. */
@@ -67,6 +86,10 @@ export class Game {
   private prevP: Vec2 = v2(0, 0)
   /** Set when the last drop target falls; the bank resets once the ball is clear. */
   bankDown = false
+  /** The left outlane kickback fires once per ball while armed. */
+  kickbackArmed = true
+  /** Scoring events banked this ball; paid out at drain. */
+  bonusUnits = 0
   onSfx: (name: SfxName) => void = () => {}
   /** The only source of randomness in the game (constraint: determinism). */
   rng: Rng
@@ -79,10 +102,25 @@ export class Game {
     this.ball = makeBall({ ...this.table.spawn })
   }
 
+  /** Rewards ramp with the hazards, so ball 3 is where the points are. */
+  get multiplier(): number {
+    return this.ballNum
+  }
+
   /** Single scoring entry point. Every point on the table passes through here. */
   award(points: number, source: ScoreSource): void {
-    void source // consumed by multipliers and bonus tallies in later steps
-    this.score += points
+    this.score += points * this.multiplier
+    if (BONUS_SOURCES.has(source)) this.bonusUnits++
+  }
+
+  /** 0 on ball 1, rising with each ball. Drives hazard strength and their rendering. */
+  get hazardLevel(): number {
+    return Math.min(this.ballNum, 3) - 1
+  }
+
+  /** Hazard strength for the ball in play. */
+  private hazard<T>(schedule: T[]): T {
+    return schedule[Math.min(this.ballNum, schedule.length) - 1]
   }
 
   ballInLane(): boolean {
@@ -98,10 +136,15 @@ export class Game {
       this.charge = Math.min(1, this.charge + dt / CHARGE_TIME)
     }
 
+    this.table.rotor.rate = this.hazard(ROTOR_RATE)
+    this.table.rotor.update(dt)
+
     if (this.capture) {
       this.holdCaptured()
       return
     }
+
+    this.applyWhirlpool(dt)
 
     const colliders: Collider[] =
       this.ball.layer === 'ramp'
@@ -110,6 +153,7 @@ export class Game {
             ...this.table.statics.filter((c) => c.active !== false),
             ...this.table.bumpers,
             ...this.table.flippers.map((f) => f.collider()),
+            ...(this.table.rotor.rate > 0 ? this.table.rotor.colliders() : []),
           ]
     const events: CollisionEvent[] = []
     this.prevP = { ...this.ball.p }
@@ -123,6 +167,30 @@ export class Game {
       this.resetBank()
     }
     if (this.ball.p.y > this.table.drainY) this.drain()
+  }
+
+  /**
+   * Charybdis: an inward pull plus a tangential swirl, falling off linearly to
+   * nothing at the rim. The swirl is what makes it read as a whirlpool rather
+   * than tilted gravity — it bends the ball's path instead of opposing the
+   * flippers head-on.
+   */
+  private applyWhirlpool(dt: number): void {
+    const pull = this.hazard(WHIRL_PULL)
+    if (pull === 0 || this.ball.layer !== 'main') return
+    const w = this.table.whirlpool
+    const dx = w.c.x - this.ball.p.x
+    const dy = w.c.y - this.ball.p.y
+    const d = Math.hypot(dx, dy)
+    if (d > w.r || d < 1e-3) return
+    const falloff = 1 - d / w.r
+    const ux = dx / d
+    const uy = dy / d
+    const swirl = this.hazard(WHIRL_SWIRL)
+    // Inward unit vector (ux, uy); its perpendicular (-uy, ux) gives the swirl.
+    const ax = (ux * pull - uy * swirl) * falloff
+    const ay = (uy * pull + ux * swirl) * falloff
+    this.ball.v = add(this.ball.v, v2(ax * dt, ay * dt))
   }
 
   /** Advances the spinner blade, scoring each full revolution, and decays its rate. */
@@ -170,6 +238,20 @@ export class Game {
           this.lightShow = { t: this.time, x: 280, y: 150 }
           this.onSfx('bonus')
         }
+      }
+      // Left outlane kickback: one save per ball, on the way down the channel.
+      if (
+        this.kickbackArmed &&
+        b.p.y > KICKBACK_ZONE.yMin &&
+        b.p.x > KICKBACK_ZONE.xMin &&
+        b.p.x < KICKBACK_ZONE.xMax
+      ) {
+        this.kickbackArmed = false
+        this.lights.kickback = false
+        b.v = v2(Math.cos(KICKBACK_ANGLE) * KICKBACK_SPEED, Math.sin(KICKBACK_ANGLE) * KICKBACK_SPEED)
+        this.award(250, 'outlane')
+        this.lightShow = { t: this.time, x: 120, y: 870 }
+        this.onSfx('kickback')
       }
       const sp = this.table.spinner
       const y = sp.a.y
@@ -267,6 +349,9 @@ export class Game {
       this.hitTimes.set(id, this.time)
       this.award(200, 'standup')
       this.onSfx('target')
+    } else if (id === 'rotor' && !onCooldown && ev.impact > 100) {
+      this.hitTimes.set(id, this.time)
+      this.onSfx('rotor')
     } else if (id === 'post' && !onCooldown && ev.impact > 120) {
       this.award(10, 'post')
       this.hitTimes.set(id, this.time)
@@ -306,6 +391,8 @@ export class Game {
   }
 
   private drain(): void {
+    if (this.bonusUnits > 0) this.award(this.bonusUnits * BONUS_PER_UNIT, 'endOfBall')
+    this.bonusUnits = 0
     this.onSfx('drain')
     if (this.ballNum >= TOTAL_BALLS) {
       this.phase = 'gameover'
@@ -317,6 +404,8 @@ export class Game {
   }
 
   private respawn(): void {
+    this.kickbackArmed = true
+    this.lights.kickback = true
     this.spinner = { angle: 0, rate: 0, revs: 0 }
     this.capture = null
     this.kickoutArmedAt = 0
@@ -326,6 +415,7 @@ export class Game {
   }
 
   restart(): void {
+    this.bonusUnits = 0
     this.resetBank()
     this.rng = new Rng(this.seed)
     this.log = []
@@ -333,7 +423,7 @@ export class Game {
     this.score = 0
     this.ballNum = 1
     this.hitTimes.clear()
-    this.lights = { laneA: false, laneB: false, laneC: false, ramp: false }
+    this.lights = { laneA: false, laneB: false, laneC: false, ramp: false, kickback: true }
     this.lightShow = null
     this.respawn()
   }

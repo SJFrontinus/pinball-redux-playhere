@@ -14,6 +14,7 @@ export const MAT = {
   sling: { e: 0.6, f: 0.2 },
   bumper: { e: 0.7, f: 0.0 },
   target: { e: 0.5, f: 0.1 },
+  rotor: { e: 0.2, f: 0.2 },
 } as const satisfies Record<string, Material>
 
 interface ColliderBase {

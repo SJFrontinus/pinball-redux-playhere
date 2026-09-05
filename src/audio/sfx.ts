@@ -76,6 +76,12 @@ export function playSfx(name: SfxName): void {
     case 'drop':
       blip(700, 0.08, 'square', 0.25, 350)
       break
+    case 'kickback':
+      blip(90, 0.22, 'sawtooth', 0.32, 700)
+      break
+    case 'rotor':
+      blip(240, 0.06, 'sawtooth', 0.22, 120)
+      break
     case 'bonus':
       blip(660, 0.09, 'square', 0.24)
       blip(880, 0.09, 'square', 0.24, undefined, 0.09)

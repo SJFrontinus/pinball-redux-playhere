@@ -368,3 +368,174 @@ describe('drop targets and standups', () => {
     expect(game.table.dropTargets.every((t) => t.active !== false)).toBe(true)
   })
 })
+
+describe('outlanes and kickback', () => {
+  /** Steps until the ball drains (ballNum advances) or the budget runs out. */
+  const drained = (game: Game, steps = 4000): boolean => {
+    const start = game.ballNum
+    for (let i = 0; i < steps; i++) {
+      game.step(DT)
+      if (game.ballNum !== start) return true
+    }
+    return false
+  }
+
+  test('the left funnel still feeds the flipper rather than the outlane', () => {
+    const game = new Game()
+    game.kickbackArmed = false // so a save cannot mask a drain
+    place(game, 40, 665, 0, 0) // resting at the top of the funnel
+    for (let i = 0; i < 1500; i++) game.step(DT)
+    expect(game.ballNum).toBe(1)
+    expect(game.ball.p.x).toBeGreaterThan(150) // reached the flipper, not the channel
+  })
+
+  test('a ball in the left outlane drains once the kickback is spent', () => {
+    const game = new Game()
+    game.kickbackArmed = false
+    place(game, 130, 870, -40, 300)
+    expect(drained(game)).toBe(true)
+  })
+
+  test('the armed kickback fires the ball back into play and disarms', () => {
+    const game = new Game()
+    expect(game.kickbackArmed).toBe(true)
+    expect(game.lights.kickback).toBe(true)
+    place(game, 130, 870, -40, 300)
+    for (let i = 0; i < 60 && game.kickbackArmed; i++) game.step(DT)
+    expect(game.kickbackArmed).toBe(false)
+    expect(game.lights.kickback).toBe(false)
+    expect(game.ball.v.y).toBeLessThan(-800) // fired upward, hard
+    expect(game.score).toBe(250)
+    // It climbs back into the playfield instead of draining immediately.
+    let minY = game.ball.p.y
+    for (let i = 0; i < 400; i++) {
+      game.step(DT)
+      minY = Math.min(minY, game.ball.p.y)
+    }
+    expect(minY).toBeLessThan(700)
+    expect(game.ballNum).toBe(1)
+  })
+
+  test('the kickback saves only once per ball', () => {
+    const game = new Game()
+    place(game, 130, 870, -40, 300)
+    for (let i = 0; i < 60 && game.kickbackArmed; i++) game.step(DT)
+    expect(game.kickbackArmed).toBe(false)
+    place(game, 130, 870, -40, 300)
+    expect(drained(game)).toBe(true)
+    expect(game.ballNum).toBe(2)
+  })
+
+  test('a new ball re-arms the kickback', () => {
+    const game = new Game()
+    game.kickbackArmed = false
+    place(game, 130, 870, -40, 300)
+    expect(drained(game)).toBe(true)
+    expect(game.kickbackArmed).toBe(true)
+    expect(game.lights.kickback).toBe(true)
+  })
+
+  test('the right outlane has no kickback', () => {
+    const game = new Game()
+    place(game, 390, 870, 40, 300)
+    expect(drained(game)).toBe(true)
+    expect(game.kickbackArmed).toBe(true) // untouched by the right drain
+  })
+})
+
+describe('progressive hazards', () => {
+  test('ball 1 is the base table: no rotor, no whirlpool', () => {
+    const game = new Game()
+    expect(game.hazardLevel).toBe(0)
+    game.step(DT)
+    expect(game.table.rotor.rate).toBe(0)
+    // A ball inside the whirlpool's radius falls straight down.
+    const w = game.table.whirlpool
+    place(game, w.c.x - 60, w.c.y - 40, 0, 0)
+    for (let i = 0; i < 120; i++) game.step(DT)
+    expect(game.ball.p.x).toBeCloseTo(w.c.x - 60, 3)
+  })
+
+  test('the hazards arm on ball 2 and strengthen on ball 3', () => {
+    const rateOn = (ballNum: number) => {
+      const game = new Game()
+      game.ballNum = ballNum
+      game.phase = 'playing'
+      game.step(DT)
+      return game.table.rotor.rate
+    }
+    expect(rateOn(1)).toBe(0)
+    expect(rateOn(2)).toBeGreaterThan(0)
+    expect(rateOn(3)).toBeGreaterThan(rateOn(2))
+  })
+
+  test('the rotor bats a ball that drops out of the lanes', () => {
+    const game = new Game()
+    game.ballNum = 2
+    const rot = game.table.rotor
+    // Dropped just outside the sweep (arm 24 + thickness 7, plus the ball's 13).
+    place(game, rot.pivot.x + 8, rot.pivot.y - 60, 0, 120)
+    for (let i = 0; i < 400 && !game.hitTimes.has('rotor'); i++) game.step(DT)
+    expect(game.hitTimes.has('rotor')).toBe(true)
+    expect(Math.abs(game.ball.v.x)).toBeGreaterThan(30) // knocked sideways, not just dropped
+  })
+
+  test('the whirlpool steers a falling ball toward the middle', () => {
+    const driftFor = (ballNum: number) => {
+      const game = new Game()
+      game.ballNum = ballNum
+      const w = game.table.whirlpool
+      place(game, w.c.x - 90, w.c.y - 30, 0, 0)
+      for (let i = 0; i < 250; i++) game.step(DT)
+      return game.ball.p.x - (w.c.x - 90)
+    }
+    expect(driftFor(1)).toBeCloseTo(0, 2)
+    expect(driftFor(3)).toBeGreaterThan(driftFor(2))
+    expect(driftFor(2)).toBeGreaterThan(2) // pulled inward, toward the drain
+  })
+
+  test('the whirlpool cannot hold the ball up', () => {
+    const game = new Game()
+    game.ballNum = 3
+    const w = game.table.whirlpool
+    place(game, w.c.x, w.c.y - 5, 0, 0)
+    for (let i = 0; i < 2000; i++) game.step(DT)
+    expect(game.ball.p.y).toBeGreaterThan(w.c.y + w.r) // fell clear of the field
+  })
+})
+
+describe('reward ramp', () => {
+  test('the multiplier follows the ball number', () => {
+    const scoreFor = (ballNum: number) => {
+      const game = new Game()
+      game.ballNum = ballNum
+      place(game, 215, 620, 0, -700) // into the left standup
+      for (let i = 0; i < 200; i++) game.step(DT)
+      return game.score
+    }
+    expect(scoreFor(1)).toBe(200)
+    expect(scoreFor(2)).toBe(400)
+    expect(scoreFor(3)).toBe(600)
+  })
+
+  test('banked scoring events pay an end-of-ball bonus', () => {
+    const game = new Game()
+    place(game, 215, 620, 0, -700)
+    for (let i = 0; i < 200; i++) game.step(DT)
+    expect(game.score).toBe(200)
+    expect(game.bonusUnits).toBe(1)
+    place(game, 280, 960, 0, 100) // over the drain line
+    game.step(DT)
+    expect(game.ballNum).toBe(2)
+    expect(game.score).toBe(200 + 250) // one unit, paid at ball 1's multiplier
+    expect(game.bonusUnits).toBe(0)
+  })
+
+  test('bumpers and slings do not bank bonus units', () => {
+    const game = new Game()
+    place(game, 280, 520, 0, -900) // into the middle bumper
+    for (let i = 0; i < 200; i++) game.step(DT)
+    expect(game.score).toBeGreaterThan(0)
+    expect(game.bonusUnits).toBe(0)
+  })
+})

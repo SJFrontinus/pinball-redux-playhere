@@ -1,6 +1,7 @@
 import { v2, norm, Vec2 } from '../physics/vec2'
 import { Collider, CircleCollider, SegmentCollider, Material, MAT, arcSegments } from '../physics/colliders'
 import { Flipper } from '../physics/flipper'
+import { Rotor } from '../physics/rotor'
 
 export const TABLE_W = 560
 export const TABLE_H = 980
@@ -24,6 +25,12 @@ export interface RolloverDef {
  */
 export const RAMP_ENTRY = { x: 75, halfW: 17, yTop: 515, yBot: 555 }
 export const RAMP_EXIT_Y = 445
+
+/** Charybdis: a swirling acceleration field, not geometry. Strength is gated by ball. */
+export interface WhirlpoolDef {
+  c: Vec2
+  r: number
+}
 
 /**
  * Kickout hole (saucer): a slow ball dropping over the hole is captured, held
@@ -57,6 +64,9 @@ export interface Table {
   dropTargets: SegmentCollider[]
   /** Centre of the bank, for the reset-when-clear check. */
   bankCentre: Vec2
+  /** Scylla, above the playfield. Arms only collide while its rate is non-zero. */
+  rotor: Rotor
+  whirlpool: WhirlpoolDef
   /** Lower pair first, then any upper flippers. Driven by side, not index. */
   flippers: Flipper[]
   spawn: Vec2
@@ -75,14 +85,32 @@ export function buildTable(): Table {
   statics.push(...arcSegments(v2(280, 280), 260, Math.PI, 2 * Math.PI, 32, MAT.wall))
 
   // Left side: wall, then funnel guiding the ball onto the left flipper.
-  seg(v2(WALL_L, 280), v2(WALL_L, 640))
-  seg(v2(WALL_L, 640), v2(162, 842))
+  seg(v2(WALL_L, 280), v2(WALL_L, 700))
+  // The funnel is now a free-standing divider: it starts below the left wall
+  // and stops at the slingshot's bottom vertex instead of running on to the
+  // flipper pivot. Both ends sit on the original funnel line, so the slingshot
+  // is still flush. A ball rolling down it leaves the guide at (136, 806) and
+  // lands on the flipper; one deflected outward at that fork drops behind the
+  // guide into the outlane.
+  seg(v2(55.5, 690.5), v2(136, 806))
+  // The outlane is the channel between that divider and the outer wall below.
+  // It is a barrel ~32-58 px wide, closed at the bottom of the table and open
+  // at the top through a one-way gate, so the kickback has somewhere to fire.
+  seg(v2(WALL_L, 700), v2(120, 900), MAT.wall, 'outlaneL')
+  // One-way gate roofing the outlane: solid to a ball descending the left wall,
+  // which rolls across it onto the divider; passable from inside the channel,
+  // so the kickback shoots straight out of the top. Sloped so nothing rests on
+  // it. The side wall runs 18 px past this junction: a ball leaving the gate
+  // moving outward would otherwise slip around the wall's end and off the table.
+  seg(v2(WALL_L, 682), v2(55.5, 690.5), MAT.wall, 'gateL', norm(v2(8.5, -35.5)))
 
   // Right side: outer wall and plunger lane (floor, inner wall, funnel).
   seg(v2(WALL_R, 280), v2(WALL_R, 900))
   seg(v2(LANE_X, 900), v2(WALL_R, 900))
-  seg(v2(LANE_X, 300), v2(LANE_X, 640))
-  seg(v2(LANE_X, 640), v2(354, 842))
+  seg(v2(LANE_X, 300), v2(LANE_X, 700))
+  seg(v2(460.5, 690.5), v2(380, 806))
+  seg(v2(LANE_X, 700), v2(396, 900), MAT.wall, 'outlaneR')
+  seg(v2(LANE_X, 682), v2(460.5, 690.5), MAT.wall, 'gateR', norm(v2(-8.5, -35.5)))
 
   // One-way gate at the top of the plunger lane: the launched ball passes
   // through from below; from the playfield side it acts as a wall.
@@ -180,8 +208,11 @@ export function buildTable(): Table {
     id: `drop${i}`,
   }))
   statics.push(...dropTargets)
-  seg(v2(421, 520), v2(449, 520), MAT.wall, 'bank-body')
-  seg(v2(449, 520), v2(449, 580), MAT.wall, 'bank-body')
+  // The top face slopes up to the right so a ball landing on the bank rolls off
+  // its front corner. Flat, it was a 28 px shelf the ball rested on forever —
+  // found by the multi-seed sim, not by eye.
+  seg(v2(421, 520), v2(449, 510), MAT.wall, 'bank-body')
+  seg(v2(449, 510), v2(449, 580), MAT.wall, 'bank-body')
   seg(v2(449, 580), v2(421, 580), MAT.wall, 'bank-body')
   const bankCentre = v2(435, 550)
 
@@ -189,6 +220,18 @@ export function buildTable(): Table {
   // landing on top rolls off instead of balancing on a flat 20 px ledge.
   seg(v2(205, 552), v2(225, 566), MAT.target, 'standL')
   seg(v2(355, 552), v2(335, 566), MAT.target, 'standR')
+
+  // Scylla: three arms under the A-B-C lane exits, so lane drop-outs get
+  // batted. Sweep radius 31 tops out at y = 209, clearing the divider bottoms
+  // at y = 188 by less than a ball width, so nothing can wedge in between.
+  // Small and dead (MAT.rotor, e = 0.2) on purpose: a longer, bouncier rotor
+  // measured as a ball *keeper*, holding the ball above y = 310 for 13 s a
+  // ball instead of 2 s — it deflects the shot, it must not launch it.
+  const rotor = new Rotor(v2(280, 240), 3, 24, 7)
+
+  // Charybdis: centred mid-table, reaching down to y = 830 — the flipper
+  // approach — so it steers a descending ball toward the middle drain.
+  const whirlpool: WhirlpoolDef = { c: v2(280, 700), r: 130 }
 
   const flippers: Flipper[] = [
     new Flipper(v2(168, 856), 74, deg(32), deg(-26), 'left'),
@@ -203,7 +246,7 @@ export function buildTable(): Table {
   rail(flippers[3], 30)
 
   return {
-    statics, rampWalls, bumpers, rollovers, kickout, spinner, dropTargets, bankCentre, flippers,
+    statics, rampWalls, bumpers, rollovers, kickout, spinner, dropTargets, bankCentre, rotor, whirlpool, flippers,
     spawn: v2(518, 880), drainY: 950,
   }
 }
