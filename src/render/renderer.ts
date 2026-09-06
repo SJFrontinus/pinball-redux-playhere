@@ -177,13 +177,25 @@ export function render(ctx: CanvasRenderingContext2D, game: Game): void {
   if (game.hazardLevel > 0) {
     const w = game.table.whirlpool
     const level = game.hazardLevel
+    const live = game.whirlOn
     ctx.save()
     for (let i = 1; i <= 3; i++) {
       const rr = (w.r * i) / 3.4
-      const spin = game.time * (0.7 + 0.5 * level) * (i % 2 === 0 ? -1 : 1)
-      ctx.globalAlpha = 0.1 + 0.11 * level
-      ctx.strokeStyle = COLORS.ramp
-      ctx.lineWidth = 2.5
+      // The phase advances only while it runs, so the arcs freeze when it stops
+      // rather than snapping back.
+      const spin = game.whirlPhase * (1 + 0.4 * level) * (i % 2 === 0 ? -1 : 1)
+      if (live) {
+        // Running: the rings cycle through colours, each offset from the last.
+        const hue = (game.time * 140 + i * 55) % 360
+        ctx.globalAlpha = 0.5 + 0.2 * Math.sin(game.time * 6 + i)
+        ctx.strokeStyle = `hsl(${hue.toFixed(0)}, 85%, 62%)`
+        ctx.lineWidth = 3.5
+      } else {
+        // Dormant: still there, dim and still.
+        ctx.globalAlpha = 0.14
+        ctx.strokeStyle = COLORS.lampOff
+        ctx.lineWidth = 2
+      }
       ctx.setLineDash([rr * 0.9, rr * 0.75])
       ctx.beginPath()
       ctx.arc(w.c.x, w.c.y, rr, spin, spin + Math.PI * 2)

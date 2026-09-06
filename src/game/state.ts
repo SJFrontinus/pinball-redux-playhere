@@ -60,8 +60,34 @@ const KICKBACK_SPEED = 1200
  * overpower a flipper save — they steer, they do not seize.
  */
 const ROTOR_RATE = [0, 6, 10]
-const WHIRL_PULL = [0, 320, 560]
-const WHIRL_SWIRL = [0, 240, 420]
+/**
+ * Charybdis. The pull is deliberately far above gravity: only its *upward*
+ * component is capped (WHIRL_MAX_LIFT), so the field steers hard sideways
+ * without ever lifting the ball. The swirl is kept low for the same reason —
+ * at 1250 it spun the ball up tangentially and the orbit itself lofted it
+ * 223 px, which is both wrong for a whirlpool and a ball-keeper.
+ */
+const WHIRL_PULL = [0, 1400, 2400]
+const WHIRL_SWIRL = [0, 250, 450]
+/**
+ * Ceiling on the field's *upward* acceleration. Gravity is 1150, and at full
+ * strength the inward pull exceeds it, so a ball below the centre was lifted
+ * 174 px — Charybdis levitating the ball. Clamping only the upward component
+ * keeps the lateral steer, which is the part that reads as a whirlpool, while
+ * guaranteeing the ball always falls through.
+ */
+const WHIRL_MAX_LIFT = 700
+/**
+ * Charybdis surges rather than running constantly: it alternates dormant and
+ * running spells of the same 6-12 s range, so it is live roughly half the time.
+ * Both durations are drawn from the seeded generator, so the headless game
+ * stays deterministic. It always starts a ball dormant, so it never ambushes
+ * the plunge.
+ */
+const WHIRL_OFF_TIME = [6, 12]
+const WHIRL_ON_TIME = [6, 12]
+/** Radians per second the drawn arcs turn while it is running. */
+const WHIRL_SPIN_RATE = 0.9
 /** Scoring events that earn an end-of-ball bonus unit (per-revolution spinner excluded). */
 const BONUS_SOURCES = new Set<ScoreSource>([
   'rollover', 'lanes', 'ramp', 'rampLit', 'kickout', 'standup', 'drop', 'bank',
@@ -101,6 +127,12 @@ export class Game {
   kickbackArmed = true
   /** Scoring events banked this ball; paid out at drain. */
   bonusUnits = 0
+  /** Whether Charybdis is currently running. Cycles on a seeded schedule. */
+  whirlOn = false
+  /** Next time the whirlpool flips state. */
+  private whirlToggleAt = 0
+  /** Arc rotation, advanced only while running so it freezes when it stops. */
+  whirlPhase = 0
   onSfx: (name: SfxName) => void = () => {}
   /** The only source of randomness in the game (constraint: determinism). */
   rng: Rng
@@ -110,6 +142,7 @@ export class Game {
 
   constructor(readonly seed: number = DEFAULT_SEED) {
     this.rng = new Rng(seed)
+    this.whirlToggleAt = this.rng.range(WHIRL_OFF_TIME[0], WHIRL_OFF_TIME[1])
     this.ball = makeBall({ ...this.table.spawn })
   }
 
@@ -155,6 +188,7 @@ export class Game {
       return
     }
 
+    this.updateWhirlpool(dt)
     this.applyWhirlpool(dt)
 
     const colliders: Collider[] =
@@ -180,6 +214,20 @@ export class Game {
     if (this.ball.p.y > this.table.drainY) this.drain()
   }
 
+  /** Runs the on/off cycle and the arc rotation. */
+  private updateWhirlpool(dt: number): void {
+    if (this.hazard(WHIRL_PULL) === 0) {
+      this.whirlOn = false
+      return
+    }
+    if (this.time >= this.whirlToggleAt) {
+      this.whirlOn = !this.whirlOn
+      const span = this.whirlOn ? WHIRL_ON_TIME : WHIRL_OFF_TIME
+      this.whirlToggleAt = this.time + this.rng.range(span[0], span[1])
+    }
+    if (this.whirlOn) this.whirlPhase += WHIRL_SPIN_RATE * dt
+  }
+
   /**
    * Charybdis: an inward pull plus a tangential swirl, falling off linearly to
    * nothing at the rim. The swirl is what makes it read as a whirlpool rather
@@ -188,20 +236,23 @@ export class Game {
    */
   private applyWhirlpool(dt: number): void {
     const pull = this.hazard(WHIRL_PULL)
-    if (pull === 0 || this.ball.layer !== 'main') return
+    if (!this.whirlOn || pull === 0 || this.ball.layer !== 'main') return
     const w = this.table.whirlpool
     const dx = w.c.x - this.ball.p.x
     const dy = w.c.y - this.ball.p.y
     const d = Math.hypot(dx, dy)
     if (d > w.r || d < 1e-3) return
-    const falloff = 1 - d / w.r
+    // Plateau: full strength across the inner ~55% of the radius, then ramping
+    // to nothing at the rim. A plain linear falloff put the force where the
+    // ball spends least time, and steered a falling ball only ~6 px.
+    const falloff = Math.min(1, 2.2 * (1 - d / w.r))
     const ux = dx / d
     const uy = dy / d
     const swirl = this.hazard(WHIRL_SWIRL)
     // Inward unit vector (ux, uy); its perpendicular (-uy, ux) gives the swirl.
     const ax = (ux * pull - uy * swirl) * falloff
     const ay = (uy * pull + ux * swirl) * falloff
-    this.ball.v = add(this.ball.v, v2(ax * dt, ay * dt))
+    this.ball.v = add(this.ball.v, v2(ax * dt, Math.max(ay, -WHIRL_MAX_LIFT) * dt))
   }
 
   /** Advances the spinner blade, scoring each full revolution, and decays its rate. */
@@ -416,6 +467,8 @@ export class Game {
   }
 
   private respawn(): void {
+    this.whirlOn = false
+    this.whirlToggleAt = this.time + this.rng.range(WHIRL_OFF_TIME[0], WHIRL_OFF_TIME[1])
     this.kickbackArmed = true
     this.lights.kickback = true
     this.spinner = { angle: 0, rate: 0, revs: 0 }
@@ -427,6 +480,7 @@ export class Game {
   }
 
   restart(): void {
+    this.whirlPhase = 0
     this.bonusUnits = 0
     this.resetBank()
     this.rng = new Rng(this.seed)

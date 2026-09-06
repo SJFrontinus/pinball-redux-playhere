@@ -484,6 +484,7 @@ describe('progressive hazards', () => {
     const driftFor = (ballNum: number) => {
       const game = new Game()
       game.ballNum = ballNum
+      game.whirlOn = true
       const w = game.table.whirlpool
       place(game, w.c.x - 90, w.c.y - 30, 0, 0)
       for (let i = 0; i < 250; i++) game.step(DT)
@@ -494,13 +495,44 @@ describe('progressive hazards', () => {
     expect(driftFor(2)).toBeGreaterThan(2) // pulled inward, toward the drain
   })
 
-  test('the whirlpool cannot hold the ball up', () => {
+  test('the whirlpool cannot lift the ball, anywhere in the field', () => {
     const game = new Game()
-    game.ballNum = 3
     const w = game.table.whirlpool
-    place(game, w.c.x, w.c.y - 5, 0, 0)
-    for (let i = 0; i < 2000; i++) game.step(DT)
-    expect(game.ball.p.y).toBeGreaterThan(w.c.y + w.r) // fell clear of the field
+    // Released at rest below the centre is the worst case: the inward pull
+    // points straight up there and would otherwise beat gravity.
+    for (const below of [20, 40, 60, 80]) {
+      const g = new Game()
+      g.ballNum = 3
+      place(g, w.c.x, w.c.y + below, 0, 0)
+      const y0 = g.ball.p.y
+      let minY = y0
+      for (let i = 0; i < 1200; i++) {
+        g.step(DT)
+        minY = Math.min(minY, g.ball.p.y)
+      }
+      expect(y0 - minY).toBeLessThan(12) // never climbs more than a ball's width
+      expect(g.ball.p.y).toBeGreaterThan(y0) // and keeps falling
+    }
+    void game
+  })
+
+  test('the whirlpool steers hard enough to matter', () => {
+    // A ball falling through the field must be pushed inward by more than a
+    // ball width, or the hazard is decorative — the earlier tuning drifted
+    // only ~6 px and read as purely visual.
+    const drift = (ballNum: number, dx: number) => {
+      const g = new Game()
+      g.ballNum = ballNum
+      g.whirlOn = true
+      const w = g.table.whirlpool
+      place(g, w.c.x + dx, w.c.y - 125, 0, 0)
+      const x0 = g.ball.p.x
+      for (let i = 0; i < 400 && g.ball.p.y < w.c.y + 125; i++) g.step(DT)
+      return g.ball.p.x - x0
+    }
+    expect(drift(1, 20)).toBeCloseTo(0, 1) // ball 1 is untouched
+    expect(Math.abs(drift(3, 20))).toBeGreaterThan(20)
+    expect(Math.abs(drift(3, 20))).toBeGreaterThan(Math.abs(drift(2, 20)))
   })
 })
 
@@ -537,5 +569,71 @@ describe('reward ramp', () => {
     for (let i = 0; i < 200; i++) game.step(DT)
     expect(game.score).toBeGreaterThan(0)
     expect(game.bonusUnits).toBe(0)
+  })
+})
+
+describe('whirlpool cycling', () => {
+  test('it starts a ball off, then surges on and off', () => {
+    const game = new Game()
+    game.ballNum = 3
+    game.phase = 'playing'
+    expect(game.whirlOn).toBe(false)
+
+    const flips: Array<{ t: number; on: boolean }> = []
+    let last = game.whirlOn
+    for (let i = 0; i < 90_000; i++) {
+      game.step(DT)
+      if (game.whirlOn !== last) {
+        last = game.whirlOn
+        flips.push({ t: game.time, on: last })
+      }
+    }
+    expect(flips.length).toBeGreaterThan(4) // several surges over 90 s
+    expect(flips[0].on).toBe(true) // first change is switching on
+    // Every spell, dormant or running, falls in the 6-12 s range.
+    for (let i = 0; i + 1 < flips.length; i++) {
+      const span = flips[i + 1].t - flips[i].t
+      expect(span).toBeGreaterThanOrEqual(6)
+      expect(span).toBeLessThanOrEqual(12)
+    }
+  })
+
+  test('while off it does not touch the ball, and its arcs stop turning', () => {
+    const game = new Game()
+    game.ballNum = 3
+    const w = game.table.whirlpool
+    place(game, w.c.x + 20, w.c.y - 125, 0, 0)
+    const x0 = game.ball.p.x
+    const phase0 = game.whirlPhase
+    for (let i = 0; i < 300; i++) game.step(DT)
+    expect(game.whirlOn).toBe(false)
+    expect(game.ball.p.x).toBeCloseTo(x0, 1) // fell straight down
+    expect(game.whirlPhase).toBe(phase0) // frozen, not spinning
+  })
+
+  test('the arcs turn only while it is running', () => {
+    const game = new Game()
+    game.ballNum = 3
+    game.phase = 'playing'
+    game.whirlOn = true
+    const before = game.whirlPhase
+    for (let i = 0; i < 500; i++) game.step(DT)
+    expect(game.whirlPhase).toBeGreaterThan(before)
+  })
+
+  test('the cycle is the same for a seed and differs across seeds', () => {
+    const pattern = (seed: number) => {
+      const g = new Game(seed)
+      g.ballNum = 3
+      g.phase = 'playing'
+      const out: boolean[] = []
+      for (let i = 0; i < 40_000; i++) {
+        g.step(DT)
+        if (i % 2000 === 0) out.push(g.whirlOn)
+      }
+      return out.join('')
+    }
+    expect(pattern(11)).toBe(pattern(11))
+    expect(pattern(11)).not.toBe(pattern(22))
   })
 })
